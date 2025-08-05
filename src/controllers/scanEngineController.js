@@ -1,6 +1,6 @@
 const ScanEngine = require('../models/ScanEngine');
 
-// Get all ScanEngine records
+// Get all ScanEngine records (HTTP endpoint)
 exports.getAllScanEngines = async (req, res) => {
   try {
     const engines = await ScanEngine.findAll();

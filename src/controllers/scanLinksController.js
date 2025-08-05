@@ -5,73 +5,114 @@ const ScanSession = require('../models/ScanSession');
 const ScannedLink = require('../models/ScannedLink');
 const ScanResults = require('../models/ScanResults');
 
-// POST /api/scan-links
+// ==============================
+// CORE LINK PROCESSING FUNCTION
+// ==============================
+// Centralized logic for processing a single link through the security pipeline
+async function processSingleLink(url, sessionId = null, shouldCache = true) {
+  const scanResultsController = require('./scanResultsController');
+  const scannedLinkController = require('./scannedLinkController');
+  
+  try {
+    // Save link to database for tracking
+    const link = await scannedLinkController.createScannedLink(sessionId, url);
+    
+    // ==============================
+    // STEP 1: CACHE CHECK
+    // ==============================
+    const cached = await cacheService.getCachedResult(link.link_ID);
+    if (cached) {
+      console.log(`[Link Processor] Cache hit for URL: ${url}`);
+      return { result: cached, fromCache: true };
+    }
+    
+    // ==============================
+    // STEP 2: WHITELIST CHECK
+    // ==============================
+    const whitelistResult = await whitelistService.checkWhitelist(url);
+    console.log(`[Link Processor] Whitelist check for ${url}:`, {
+      isWhitelisted: whitelistResult.isWhitelisted,
+      reason: whitelistResult.reason,
+      rank: whitelistResult.rank
+    });
+    
+    if (whitelistResult.isWhitelisted) {
+      console.log(`[Link Processor] ✅ URL ${url} is whitelisted (${whitelistResult.reason})`);
+      const result = await scanResultsController.createWhitelistResult(whitelistResult, link.link_ID, sessionId);
+      return { result, fromCache: false, whitelisted: true };
+    }
+    
+    // ==============================
+    // STEP 3: MACHINE LEARNING ANALYSIS
+    // ==============================
+    console.log(`[Link Processor] 🤖 Calling ML service for ${url}...`);
+    let verdict = {
+      isMalicious: false,
+      anomalyScore: 0.1,
+      classificationScore: 0.9,
+      intelMatch: 'none'
+    };
+
+    try {
+      const mlResponse = await mlService.analyzeLinks([url]);
+      if (mlResponse && mlResponse.verdicts && mlResponse.verdicts[0]) {
+        verdict = mlResponse.verdicts[0];
+        console.log(`[Link Processor] 🤖 ML verdict for ${url}:`, verdict);
+      } else {
+        console.log(`[Link Processor] 🤖 ML service returned default verdict for ${url}`);
+      }
+    } catch (mlError) {
+      console.warn(`[Link Processor] 🤖 ML service unavailable for ${url}, using simulated analysis:`, mlError.message);
+    }
+
+    // Store result with caching if requested
+    const result = shouldCache 
+      ? await scanResultsController.createResultWithCache(verdict, link.link_ID, sessionId)
+      : await ScanResults.create({
+          isMalicious: verdict.isMalicious,
+          anomalyScore: verdict.anomalyScore,
+          classificationScore: verdict.classificationScore,
+          intelMatch: verdict.intelMatch || 'none',
+          link_ID: link.link_ID,
+          session_ID: sessionId
+        });
+
+    return { result, fromCache: false, whitelisted: false };
+    
+  } catch (error) {
+    console.error(`[Link Processor] Error processing link ${url}:`, error);
+    throw error;
+  }
+}
+
+// ==============================
+// HTTP ENDPOINTS
+// ==============================
+
+// POST /api/scan-links - Bulk scanning endpoint
 exports.scanLinks = async (req, res) => {
   try {
     const { session_ID, links } = req.body;
     if (!session_ID || !Array.isArray(links) || links.length === 0) {
       return res.status(400).json({ error: 'session_ID and links array are required' });
     }
+    
     // Check session exists
     const session = await ScanSession.findByPk(session_ID);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
-    // For each link: cache first, then whitelist, then ML service
+    
+    // Process each link
     const results = [];
     for (const url of links) {
-      // Save link to ScannedLink
-      const link = await ScannedLink.create({ session_ID, url, scanTimestamp: new Date() });
-      
-      // 1. Check cache first (fastest)
-      const cached = await cacheService.getCachedResult(link.link_ID);
-      if (cached) {
-        console.log(`Cache hit for URL: ${url}`);
-        results.push(cached);
-        continue;
-      }
-      
-      // 2. Check whitelist if not cached
-      const whitelistResult = await whitelistService.checkWhitelist(url);
-      if (whitelistResult.isWhitelisted) {
-        console.log(`URL ${url} is whitelisted (${whitelistResult.reason})`);
-        const result = await ScanResults.create({
-          isMalicious: false,
-          anomalyScore: 0.0,
-          classificationScore: 1.0, // High confidence it's safe
-          intelMatch: `Whitelisted via ${whitelistResult.source}${whitelistResult.rank ? ` (rank: ${whitelistResult.rank})` : ''}`,
-          link_ID: link.link_ID,
-          session_ID
-        });
-        
-        // Note: Whitelist results are NOT cached as Tranco API calls are fast
-        // and don't require expensive computation like ML analysis
-        
+      try {
+        const { result } = await processSingleLink(url, session_ID, true);
         results.push(result);
-        continue;
+      } catch (error) {
+        console.error(`Error processing ${url}:`, error);
+        // Continue processing other links even if one fails
       }
-      
-      // 3. Call ML service if not whitelisted and not cached
-      const mlResponse = await mlService.analyzeLinks([url]);
-      const verdict = mlResponse.verdicts[0]; // Get the first verdict from the response
-      const result = await ScanResults.create({
-        isMalicious: verdict.isMalicious,
-        anomalyScore: verdict.anomalyScore,
-        classificationScore: verdict.classificationScore,
-        intelMatch: verdict.intelMatch,
-        link_ID: link.link_ID,
-        session_ID
-      });
-      // Cache the ML result for future use (ML analysis is expensive and benefits from caching)
-      await cacheService.setCachedResult({
-        results_ID: result.result_ID,
-        link_ID: link.link_ID,
-        isMalicious: result.isMalicious,
-        anomalyScore: result.anomalyScore,
-        classificationScore: result.classificationScore,
-        admin_ID: null // or set if available
-      });
-      results.push(result);
     }
     
     // Include ScannedLink data in the response for client processing
@@ -90,7 +131,7 @@ exports.scanLinks = async (req, res) => {
   }
 };
 
-// POST /api/scan-link (for extension quick test)
+// POST /api/scan-link - Single link scanning endpoint (for quick tests)
 exports.scanLink = async (req, res) => {
   try {
     const { url } = req.body;
@@ -99,96 +140,70 @@ exports.scanLink = async (req, res) => {
     }
 
     console.log('Scanning link:', url);
-
-    // 1. Check cache first (fastest) - try to find existing scan result for this URL
-    const cachedResult = await cacheService.getCachedResultByUrl(url);
-    if (cachedResult) {
-      console.log('Cache hit for:', url);
-      return res.json({
-        isMalicious: cachedResult.isMalicious,
-        anomalyScore: parseFloat(cachedResult.anomalyScore),
-        classificationScore: parseFloat(cachedResult.classificationScore),
-        intelMatch: cachedResult.intelMatch || 'none',
-        cached: true
-      });
-    }
-
-    // 2. Check whitelist if not cached
-    const whitelistResult = await whitelistService.checkWhitelist(url);
-    if (whitelistResult.isWhitelisted) {
-      console.log(`URL ${url} is whitelisted (${whitelistResult.reason})`);
-      
-      // Save whitelist result to database for caching
-      const link = await ScannedLink.create({ 
-        url, 
-        scanTimestamp: new Date() 
-      });
-      
-      const result = await ScanResults.create({
-        isMalicious: false,
-        anomalyScore: 0.0,
-        classificationScore: 1.0,
-        intelMatch: `Whitelisted via ${whitelistResult.source}${whitelistResult.rank ? ` (rank: ${whitelistResult.rank})` : ''}`,
-        link_ID: link.link_ID
-      });
-      
-      // Note: Whitelist results are NOT cached as Tranco API calls are fast
-      // and don't require expensive computation like ML analysis
-      
-      return res.json({
-        isMalicious: false,
-        anomalyScore: 0.0,
-        classificationScore: 1.0,
-        intelMatch: `Whitelisted via ${whitelistResult.source}${whitelistResult.rank ? ` (rank: ${whitelistResult.rank})` : ''}`,
-        cached: false,
-        whitelisted: true
-      });
-    }
-
-    // 3. If not cached and not whitelisted, try ML service, but fall back to safe default if it fails
-    let verdict = {
-      isMalicious: false,
-      anomalyScore: 0.1,
-      classificationScore: 0.9,
-      intelMatch: 'none'
-    };
-
-    try {
-      const mlResponse = await mlService.analyzeLinks([url]);
-      if (mlResponse && mlResponse.verdicts && mlResponse.verdicts[0]) {
-        verdict = mlResponse.verdicts[0];
-      }
-    } catch (mlError) {
-      console.log('ML service unavailable, using safe default for:', url);
-    }
-
-    // Save the scan result for future use
-    const link = await ScannedLink.create({ 
-      session_ID: null, // No session for quick scans
-      url, 
-      scanTimestamp: new Date() 
-    });
     
-    const result = await ScanResults.create({
-      isMalicious: verdict.isMalicious,
-      anomalyScore: verdict.anomalyScore,
-      classificationScore: verdict.classificationScore,
-      intelMatch: verdict.intelMatch || 'none',
-      link_ID: link.link_ID,
-      session_ID: null
-    });
-
-    console.log('Scan complete for:', url, 'Result:', verdict);
-
+    const { result, fromCache, whitelisted } = await processSingleLink(url, null, false);
+    
     res.json({
       isMalicious: result.isMalicious,
       anomalyScore: parseFloat(result.anomalyScore),
       classificationScore: parseFloat(result.classificationScore),
       intelMatch: result.intelMatch,
-      cached: false
+      cached: fromCache,
+      whitelisted: whitelisted || false
     });
   } catch (error) {
     console.error('Error in scanLink:', error);
     res.status(500).json({ error: 'Failed to scan link', details: error.message });
   }
 };
+
+// ==============================
+// BULK LINK PROCESSING FOR EXTENSION (PAGE-AWARE)
+// ==============================
+// Process multiple links for extension with page-based deduplication and caching
+exports.processBulkLinksForExtension = async (links, sessionId, alreadyProcessed, pageUrl = null) => {
+  const scannedLinkController = require('./scannedLinkController');
+  
+  // Get cached verdicts for already processed links
+  const verdicts = await scannedLinkController.getCachedVerdicts(links, sessionId, alreadyProcessed, convertToVerdict);
+  
+  // Filter out already processed links
+  const newLinks = links.filter(url => !alreadyProcessed.has(url));
+  console.log(`[Link Processor] Processing ${newLinks.length} new links for page: ${pageUrl || 'unknown'} (${links.length - newLinks.length} already processed)`);
+  
+  // Process only new links through the centralized security pipeline
+  for (const url of newLinks) {
+    try {
+      const { result } = await processSingleLink(url, sessionId, true);
+      verdicts[url] = convertToVerdict(result);
+    } catch (linkError) {
+      console.error(`[Link Processor] Error processing link ${url}:`, linkError);
+      verdicts[url] = 'failed';
+    }
+  }
+  
+  return {
+    verdicts,
+    newLinksProcessed: newLinks.length,
+    cachedLinksReturned: links.length - newLinks.length
+  };
+};
+
+// Helper function to convert scan results to extension-friendly verdict categories
+function convertToVerdict(scanResult) {
+  if (scanResult.isMalicious) {
+    return 'malicious';
+  }
+  
+  const anomalyScore = parseFloat(scanResult.anomalyScore);
+  
+  if (anomalyScore > 0.7) {
+    return 'danger';
+  } else if (anomalyScore > 0.5) {
+    return 'warning';
+  } else if (anomalyScore > 0.3) {
+    return 'anomalous';
+  } else {
+    return 'safe';
+  }
+}

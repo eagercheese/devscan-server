@@ -213,45 +213,6 @@ class WhitelistService {
   }
 
   /**
-   * Bulk whitelist check for multiple URLs
-   * @param {string[]} urls - Array of URLs to check
-   * @returns {Promise<Object[]>} Array of whitelist results
-   */
-  async checkWhitelistBulk(urls) {
-    console.log(`Checking whitelist for ${urls.length} URLs`);
-    
-    const results = await Promise.all(
-      urls.map(async (url) => {
-        const result = await this.checkWhitelist(url);
-        return { url, ...result };
-      })
-    );
-
-    const whitelistedCount = results.filter(r => r.isWhitelisted).length;
-    console.log(`Whitelist check complete: ${whitelistedCount}/${urls.length} URLs whitelisted`);
-    
-    return results;
-  }
-
-  /**
-   * Add domain to manual whitelist
-   * @param {string} domain - Domain to add
-   */
-  addToManualWhitelist(domain) {
-    this.manualWhitelist.add(domain.toLowerCase());
-    console.log(`Added ${domain} to manual whitelist`);
-  }
-
-  /**
-   * Remove domain from manual whitelist
-   * @param {string} domain - Domain to remove
-   */
-  removeFromManualWhitelist(domain) {
-    this.manualWhitelist.delete(domain.toLowerCase());
-    console.log(`Removed ${domain} from manual whitelist`);
-  }
-
-  /**
    * Get whitelist statistics
    * @returns {Object} Statistics about whitelist usage
    */
@@ -291,14 +252,6 @@ class WhitelistService {
         mlProcessingPercentage: cacheEntries.length > 0 ? (((unsafeCount + unrankedCount) / cacheEntries.length) * 100).toFixed(1) : 0
       }
     };
-  }
-
-  /**
-   * Clear cache
-   */
-  clearCache() {
-    this.cache.clear();
-    console.log('Whitelist cache cleared');
   }
 }
 
