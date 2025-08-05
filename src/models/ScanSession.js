@@ -23,3 +23,4 @@ const ScanSession = sequelize.define('ScanSession', {
 });
 
 module.exports = ScanSession;
+

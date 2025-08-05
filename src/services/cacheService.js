@@ -3,18 +3,6 @@ const CachedResults = require('../models/CachedResults');
 const ScannedLink = require('../models/ScannedLink');
 const ScanResults = require('../models/ScanResults');
 
-/**
- * CACHE SERVICE
- * 
- * This service manages caching for ML analysis results only.
- * 
- * Caching Strategy:
- * - ML results: CACHED (expensive computation, slow response)
- * - Tranco whitelist results: NOT CACHED (fast API, real-time rankings)
- * 
- * Cache duration: 1 week (automatic cleanup)
- */
-
 // Check cache for a link (ML results only)
 exports.getCachedResult = async (link_ID) => {
   // Remove old cache entries before checking

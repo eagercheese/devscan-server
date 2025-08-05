@@ -16,7 +16,7 @@ const sequelize = require('./src/models');
 const PORT = process.env.PORT || 3000;
 
 // Startup logging for debugging
-console.log('🚀 Starting DEVScan Server...');
+console.log('Starting DEVScan Server...');
 console.log('Working directory:', process.cwd());
 console.log('Environment:', process.env.NODE_ENV || 'development');
 console.log('Port:', PORT);
@@ -24,23 +24,23 @@ console.log('Port:', PORT);
 // Database connection and server startup sequence
 sequelize.authenticate()
   .then(() => {
-    console.log('✅ MySQL connection established successfully.');
+    console.log('MySQL connection established successfully.');
     
     // Sync database tables (create/update schema without dropping data)
     return sequelize.sync({ alter: true });
   })
   .then(() => {
-    console.log('✅ Database tables synced successfully.');
+    console.log('Database tables synced successfully.');
     
     // Start the HTTP server
     app.listen(PORT, () => {
-      console.log(`🌐 Server is running on http://localhost:${PORT}`);
-      console.log('📡 Extension endpoint: /api/extension/analyze');
-      console.log('🔍 Health check: /health');
-      console.log('🗃️ Debug endpoint: /debug/database');
+      console.log(`Server is running on http://localhost:${PORT}`);
+      console.log('Extension endpoint: /api/extension/analyze');
+      console.log('Health check: /health');
+      console.log('Debug endpoint: /debug/database');
     });
   })
   .catch((err) => {
-    console.error('❌ Unable to connect to the MySQL database:', err);
+    console.error('Unable to connect to the MySQL database:', err);
     process.exit(1);
   });
