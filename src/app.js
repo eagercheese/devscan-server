@@ -28,6 +28,26 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Server is running.' });
 });
 
+// ML service health check endpoint
+app.get('/health/ml', async (req, res) => {
+  try {
+    const mlService = require('./services/mlService');
+    const healthCheck = await mlService.checkHealth();
+    
+    res.status(healthCheck.status === 'healthy' ? 200 : 503).json({
+      ml_service: healthCheck,
+      server_status: 'ok',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(503).json({
+      ml_service: { status: 'error', error: error.message },
+      server_status: 'ok',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Debug endpoint to inspect database content (development use)
 app.get('/debug/database', async (req, res) => {
   try {
