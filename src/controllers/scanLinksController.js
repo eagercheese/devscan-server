@@ -27,9 +27,9 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     }
     
     // ==============================
-    // STEP 2: WHITELIST CHECK
+    // STEP 2: WHITELIST CHECK (NOW INSTANT!)
     // ==============================
-    const whitelistResult = await whitelistService.checkWhitelist(url);
+    const whitelistResult = whitelistService.checkWhitelist(url);
     console.log(`[Link Processor] Whitelist check for ${url}:`, {
       isWhitelisted: whitelistResult.isWhitelisted,
       reason: whitelistResult.reason,
@@ -141,16 +141,35 @@ exports.scanLink = async (req, res) => {
 
     console.log('Scanning link:', url);
     
+    // Check fast URL cache first (10 minute TTL)
+    const cachedResult = cacheService.getCachedResultByUrlFast(url);
+    if (cachedResult) {
+      console.log('⚡ Fast cache hit for URL:', url);
+      return res.json({
+        isMalicious: cachedResult.isMalicious,
+        anomalyScore: parseFloat(cachedResult.anomalyScore),
+        classificationScore: parseFloat(cachedResult.classificationScore),
+        intelMatch: cachedResult.intelMatch,
+        cached: true,
+        whitelisted: cachedResult.whitelisted || false
+      });
+    }
+    
     const { result, fromCache, whitelisted } = await processSingleLink(url, null, false);
     
-    res.json({
+    const response = {
       isMalicious: result.isMalicious,
       anomalyScore: parseFloat(result.anomalyScore),
       classificationScore: parseFloat(result.classificationScore),
       intelMatch: result.intelMatch,
       cached: fromCache,
       whitelisted: whitelisted || false
-    });
+    };
+    
+    // Store in fast URL cache for future requests
+    cacheService.setCachedResultByUrlFast(url, response);
+    
+    res.json(response);
   } catch (error) {
     console.error('Error in scanLink:', error);
     res.status(500).json({ error: 'Failed to scan link', details: error.message });
