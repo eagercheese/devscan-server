@@ -23,8 +23,6 @@ exports.analyzeLinks = async (req, res) => {
       return res.status(400).json({ error: 'links array is required' });
     }
 
-    console.log(`[Extension API] Analyzing ${links.length} links from domain: ${domain} (Page: ${pageUrl}, Refreshed: ${pageRefreshed}, Session: ${sessionId})`);
-
     // ==============================
     // SESSION MANAGEMENT (PAGE-AWARE)
     // ==============================
@@ -55,28 +53,14 @@ exports.analyzeLinks = async (req, res) => {
     // ==============================
     // RESPONSE GENERATION
     // ==============================
-    // Log completion statistics and send response to extension
-    console.log(`[Extension API] Completed analysis for ${Object.keys(processingResult.verdicts).length} links (${processingResult.newLinksProcessed} new, ${processingResult.cachedLinksReturned} cached)`);
-    
-    // Log Tranco filtering statistics for monitoring
-    const whitelistStats = whitelistService.getDetailedStats();
-    console.log(`[Extension API] 📊 Whitelist Statistics:`, {
-      safeThreshold: whitelistStats.safeRankThreshold,
-      safePercentage: whitelistStats.trancoStats.safePercentage + '%',
-      mlProcessingPercentage: whitelistStats.trancoStats.mlProcessingPercentage + '%'
-    });
-    
+    // Send response to extension with processing results
     res.json({ 
       success: true,
       verdicts: processingResult.verdicts,
       session_ID: currentSessionId,
       processed: Object.keys(processingResult.verdicts).length,
       newLinks: processingResult.newLinksProcessed,
-      cachedLinks: processingResult.cachedLinksReturned,
-      whitelistStats: {
-        safeRankThreshold: whitelistStats.safeRankThreshold,
-        rangeDescription: whitelistStats.rangeDescription
-      }
+      cachedLinks: processingResult.cachedLinksReturned
     });
     
   } catch (error) {

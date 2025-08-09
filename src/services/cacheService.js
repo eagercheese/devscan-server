@@ -70,7 +70,6 @@ exports.getCachedResult = async (link_ID) => {
       
       const result = await CachedResults.findOne({ where: { link_ID } });
       if (result) {
-        console.log(`[CacheService] 🎯 Database cache hit for link ${link_ID}`);
         return result;
       }
     } catch (error) {
@@ -124,7 +123,7 @@ exports.setCachedResult = async (result) => {
         
         if (existingResult && existingLink) {
           const cached = await CachedResults.create(result);
-          console.log(`[CacheService] ✅ Stored result in database cache for link ${result.link_ID}`);
+          console.log(`[CacheService] ✅ Stored result in database cache for link ${result.link_ID}\n`);
           
           // Also store in memory cache for faster access
           const cacheKey = `result_${result.link_ID}`;

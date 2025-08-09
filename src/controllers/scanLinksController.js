@@ -30,14 +30,9 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     // STEP 2: WHITELIST CHECK (NOW INSTANT!)
     // ==============================
     const whitelistResult = whitelistService.checkWhitelist(url);
-    console.log(`[Link Processor] Whitelist check for ${url}:`, {
-      isWhitelisted: whitelistResult.isWhitelisted,
-      reason: whitelistResult.reason,
-      rank: whitelistResult.rank
-    });
     
     if (whitelistResult.isWhitelisted) {
-      console.log(`[Link Processor] ✅ URL ${url} is whitelisted (${whitelistResult.reason})`);
+      console.log(`\n[Link Processor] ✅ Whitelisted: ${url} (${whitelistResult.reason})`);
       const result = await scanResultsController.createWhitelistResult(whitelistResult, link.link_ID, sessionId);
       return { result, fromCache: false, whitelisted: true };
     }
@@ -45,7 +40,6 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     // ==============================
     // STEP 3: MACHINE LEARNING ANALYSIS
     // ==============================
-    console.log(`[Link Processor] 🤖 Calling ML service for ${url}...`);
     let verdict = {
       isMalicious: false,
       anomalyScore: 0.1,
@@ -57,12 +51,10 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
       const mlResponse = await mlService.analyzeLinks([url]);
       if (mlResponse && mlResponse.verdicts && mlResponse.verdicts[0]) {
         verdict = mlResponse.verdicts[0];
-        console.log(`[Link Processor] 🤖 ML verdict for ${url}:`, verdict);
-      } else {
-        console.log(`[Link Processor] 🤖 ML service returned default verdict for ${url}`);
+        console.log(`\n[Link Processor] 🤖 ML analysis: ${url} -> ${verdict.isMalicious ? 'MALICIOUS' : 'SAFE'} (score: ${verdict.anomalyScore.toFixed(3)})`);
       }
     } catch (mlError) {
-      console.warn(`[Link Processor] 🤖 ML service unavailable for ${url}, using simulated analysis:`, mlError.message);
+      console.warn(`\n[Link Processor] ⚠️ ML service unavailable, using default verdict for ${url}`);
     }
 
     // Store result with caching if requested
@@ -188,7 +180,6 @@ exports.processBulkLinksForExtension = async (links, sessionId, alreadyProcessed
   
   // Filter out already processed links
   const newLinks = links.filter(url => !alreadyProcessed.has(url));
-  console.log(`[Link Processor] Processing ${newLinks.length} new links for page: ${pageUrl || 'unknown'} (${links.length - newLinks.length} already processed)`);
   
   // Process only new links through the centralized security pipeline
   for (const url of newLinks) {

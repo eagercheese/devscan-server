@@ -7,7 +7,7 @@ const cacheService = require('../services/cacheService');
 async function createScanResultRecord(resultData) {
   try {
     const result = await ScanResults.create(resultData);
-    console.log(`[Results Manager] Created scan result for link ${resultData.link_ID}`);
+    // Silent creation - only log errors
     return result;
   } catch (error) {
     console.error(`[Results Manager] Error creating scan result:`, error);
@@ -102,7 +102,7 @@ exports.createResultWithCache = async (verdict, linkId, sessionId) => {
       admin_ID: null
     });
 
-    console.log(`[Results Manager] Stored and cached ML result for link ${linkId}`);
+    // Silent storage - only log errors
     return result;
   } catch (error) {
     console.error(`[Results Manager] Error creating result with cache for link ${linkId}:`, error);
@@ -122,7 +122,7 @@ exports.createWhitelistResult = async (whitelistResult, linkId, sessionId) => {
       session_ID: sessionId
     });
 
-    console.log(`[Results Manager] Stored whitelist result for link ${linkId}`);
+    // Silent whitelist storage - only log errors
     return result;
   } catch (error) {
     console.error(`[Results Manager] Error creating whitelist result for link ${linkId}:`, error);

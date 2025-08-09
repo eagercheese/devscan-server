@@ -126,7 +126,6 @@ class WhitelistService {
 
     // Check manual whitelist first
     if (this.isManuallyWhitelisted(domain)) {
-      console.log(`[WhitelistService] Domain ${domain} WHITELISTED via manual list`);
       return {
         isWhitelisted: true,
         reason: 'manual_whitelist',
@@ -137,7 +136,6 @@ class WhitelistService {
 
     // Check Tranco top 1K (instant lookup)
     if (this.isTrancoSafe(domain)) {
-      console.log(`[WhitelistService] Domain ${domain} WHITELISTED via Tranco (top ${this.safeRankThreshold})`);
       return {
         isWhitelisted: true,
         reason: 'tranco_safe_rank',
@@ -149,7 +147,6 @@ class WhitelistService {
     }
 
     // Not whitelisted - will be processed by ML model
-    console.log(`[WhitelistService] Domain ${domain} NOT WHITELISTED - will go to ML model`);
     return {
       isWhitelisted: false,
       reason: 'not_in_safe_rankings',
