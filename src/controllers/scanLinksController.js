@@ -41,11 +41,13 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     // STEP 3: MACHINE LEARNING ANALYSIS
     // ==============================
     let verdict = {
-      isMalicious: false,
-      anomalyScore: 0.1,
+      isMalicious: true,
+      anomalyScore: 0.9,
       classificationScore: 0.9,
       intelMatch: 'none'
     };
+    // for trial
+    // return { verdict, fromCache: false, whitelisted: false };
 
     try {
       const mlResponse = await mlService.analyzeLinks([url]);

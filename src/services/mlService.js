@@ -9,11 +9,13 @@ const axios = require('axios');
 // Default configuration
 const DEFAULT_ML_URL = 'http://localhost:3001/analyze';
 const DEFAULT_TIMEOUT = 60000; // 60 seconds for ML processing
+console.log('SIMULATE_ML =', process.env.SIMULATE_ML);
 
 // Service to send links to the ML model and get verdicts
 exports.analyzeLinks = async (links) => {
   const mlServiceUrl = process.env.ML_SERVICE_URL || DEFAULT_ML_URL;
   const timeout = parseInt(process.env.ML_TIMEOUT) || DEFAULT_TIMEOUT;
+
   
   try {
     console.log(`[ML Service] Analyzing ${links.length} links via Bridge API: ${mlServiceUrl}`);

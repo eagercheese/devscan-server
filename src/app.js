@@ -105,4 +105,12 @@ app.use('/api/scan-links', scanLinksRoutes);
 const extensionRoutes = require('./routes/extensionRoutes');
 app.use('/api/extension', extensionRoutes);
 
+// Link extraction service routes
+// This service extracts links from a malicious URL
+const extractlinkRoutes = require('./routes/extractlinksRoutes');
+app.use('/api/extract-links', extractlinkRoutes);
+
+// Unshortened link service routes
+const unshortenedLink = require('./routes/unshortenedLinkRoutes');
+app.use('/api/unshortened-links', unshortenedLink);
 module.exports = app;
