@@ -14,55 +14,91 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
   const scannedLinkController = require('./scannedLinkController');
   
   try {
+    // Save link to database for tracking
+    const link = await scannedLinkController.createScannedLink(sessionId, url);
+    
     // ==============================
-    // STEP 1: CACHE CHECK (Check by URL first!)
+    // STEP 1: CACHE CHECK
     // ==============================
-    const cached = await cacheService.getCachedResultByUrl(url);
+    const cached = await cacheService.getCachedResult(link.link_ID);
     if (cached) {
-      console.log(`[Link Processor] ✅ Cache hit for URL: ${url}`);
-      
-      // Still save link to database for tracking if we have a session
-      if (sessionId) {
-        const link = await scannedLinkController.createScannedLink(sessionId, url);
-        // Create a scan result record pointing to the cached data
-        const result = await ScanResults.create({
-          isMalicious: cached.isMalicious,
-          anomalyScore: cached.anomalyScore,
-          classificationScore: cached.classificationScore,
-          intelMatch: cached.intelMatch,
-          link_ID: link.link_ID,
-          session_ID: sessionId
-        });
-        return { result: result, fromCache: true };
-      }
-      
+      console.log(`[Link Processor] Cache hit for URL: ${url}`);
       return { result: cached, fromCache: true };
     }
-
-    // Save link to database for tracking (only if not cached)
-    const link = await scannedLinkController.createScannedLink(sessionId, url);
     
     // ==============================
     // STEP 2: WHITELIST CHECK (NOW INSTANT!)
     // ==============================
     const whitelistResult = whitelistService.checkWhitelist(url);
+    const suspiciousKeywords = [
+    "redirect", "target", "dest", "goto",
+    "login", "verify", "account", "secure", "update",
+    ".exe", ".zip", ".scr", ".apk", ".php",
+    "javascript:", "data:", "base64"
+];
+
+    function checkValue(label, decodedValue) {
+        // Layer 1: Keyword Detection
+        const hasKeyword = suspiciousKeywords.some(word =>
+            decodedValue.toLowerCase().includes(word)
+        );
+
+        // Layer 2: Base64 Check
+        let hasSuspiciousDecoded = false;
+        const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+        if (base64Regex.test(decodedValue)) {
+            try {
+                const base64Decoded = atob(decodedValue);
+                const decodedHasKeyword = suspiciousKeywords.some(word =>
+                    base64Decoded.toLowerCase().includes(word)
+                );
+                if (decodedHasKeyword) {
+                    hasSuspiciousDecoded = true;
+                }
+            } catch {}
+        }
+
+        return hasKeyword || hasSuspiciousDecoded;
+    }
+
+    function isUrlMalicious(url) {
+        try {
+            const parsed = new URL(url);
+
+            // 1️⃣ Check query parameters
+            for (const [key, value] of parsed.searchParams.entries()) {
+                const decodedValue = decodeURIComponent(value || "");
+                if (checkValue(`Query Param "${key}"`, key + "=" + decodedValue)) {
+                    return true;
+                }
+            }
+
+            // 2️⃣ Check path segments
+            const pathSegments = parsed.pathname.split("/").filter(Boolean);
+            for (const segment of pathSegments) {
+                const decodedSegment = decodeURIComponent(segment);
+                if (checkValue(`Path Segment`, decodedSegment)) {
+                    return true;
+                }
+            }
+
+            return false;
+        } catch {
+            return false;
+        }
+    }
     
+    // Check whitelist and if found under go for further verification
     if (whitelistResult.isWhitelisted) {
-      console.log(`\n[Link Processor] ✅ Whitelisted: ${url} (${whitelistResult.reason})`);
-      const result = await scanResultsController.createWhitelistResult(whitelistResult, link.link_ID, sessionId);
-      
-      // Cache the whitelist result so future requests don't need to reprocess
-      if (shouldCache) {
-        await cacheService.setCachedResultByUrl(url, {
-          isMalicious: false,
-          anomalyScore: 0.0,
-          classificationScore: 0.0,
-          intelMatch: 'whitelisted',
-          whitelisted: true
-        });
+      console.log(`\n[Link Processor] ✅ Whitelisted - Proceeding to further verification`);
+
+      if (!isUrlMalicious(url)){
+        console.log(`\n[Link Processor] ✅ Whitelisted and Verified: ${url} (${whitelistResult.reason})`);
+
+        const result = await scanResultsController.createWhitelistResult(whitelistResult, link.link_ID, sessionId);
+        return { result, fromCache: false, whitelisted: true };
+
       }
-      
-      return { result, fromCache: false, whitelisted: true };
     }
     
     // ==============================
@@ -98,17 +134,6 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
           link_ID: link.link_ID,
           session_ID: sessionId
         });
-
-    // Cache the ML result by URL for future requests
-    if (shouldCache) {
-      await cacheService.setCachedResultByUrl(url, {
-        isMalicious: result.isMalicious,
-        anomalyScore: result.anomalyScore,
-        classificationScore: result.classificationScore,
-        intelMatch: result.intelMatch,
-        whitelisted: false
-      });
-    }
 
     return { result, fromCache: false, whitelisted: false };
     
@@ -174,10 +199,10 @@ exports.scanLink = async (req, res) => {
 
     console.log('Scanning link:', url);
     
-    // Check URL-based cache first
-    const cachedResult = await cacheService.getCachedResultByUrl(url);
+    // Check fast URL cache first (10 minute TTL)
+    const cachedResult = cacheService.getCachedResultByUrlFast(url);
     if (cachedResult) {
-      console.log('⚡ Cache hit for URL:', url);
+      console.log('⚡ Fast cache hit for URL:', url);
       return res.json({
         isMalicious: cachedResult.isMalicious,
         anomalyScore: parseFloat(cachedResult.anomalyScore),
@@ -188,7 +213,7 @@ exports.scanLink = async (req, res) => {
       });
     }
     
-    const { result, fromCache, whitelisted } = await processSingleLink(url, null, true);
+    const { result, fromCache, whitelisted } = await processSingleLink(url, null, false);
     
     const response = {
       isMalicious: result.isMalicious,
@@ -198,6 +223,9 @@ exports.scanLink = async (req, res) => {
       cached: fromCache,
       whitelisted: whitelisted || false
     };
+    
+    // Store in fast URL cache for future requests
+    cacheService.setCachedResultByUrlFast(url, response);
     
     res.json(response);
   } catch (error) {
