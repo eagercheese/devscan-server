@@ -14,15 +14,24 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
   const scannedLinkController = require('./scannedLinkController');
   
   try {
+    // ==============================
+    // STEP 0: URL-BASED CACHE CHECK FIRST
+    // ==============================
+    const urlCached = await cacheService.getCachedResultByUrl(url);
+    if (urlCached) {
+      console.log(`[Link Processor] 💾 URL cache hit for: ${url}`);
+      return { result: urlCached, fromCache: true };
+    }
+    
     // Save link to database for tracking
     const link = await scannedLinkController.createScannedLink(sessionId, url);
     
     // ==============================
-    // STEP 1: CACHE CHECK
+    // STEP 1: LINK ID CACHE CHECK (FALLBACK)
     // ==============================
     const cached = await cacheService.getCachedResult(link.link_ID);
     if (cached) {
-      console.log(`[Link Processor] Cache hit for URL: ${url}`);
+      console.log(`[Link Processor] 🗄️ Database cache hit for URL: ${url}`);
       return { result: cached, fromCache: true };
     }
     
@@ -199,10 +208,10 @@ exports.scanLink = async (req, res) => {
 
     console.log('Scanning link:', url);
     
-    // Check fast URL cache first (10 minute TTL)
-    const cachedResult = cacheService.getCachedResultByUrlFast(url);
+    // Check cache first (both fast cache and database)
+    const cachedResult = await cacheService.getCachedResultByUrl(url);
     if (cachedResult) {
-      console.log('⚡ Fast cache hit for URL:', url);
+      console.log('💾 Cache hit for URL:', url);
       return res.json({
         isMalicious: cachedResult.isMalicious,
         anomalyScore: parseFloat(cachedResult.anomalyScore),
@@ -224,8 +233,8 @@ exports.scanLink = async (req, res) => {
       whitelisted: whitelisted || false
     };
     
-    // Store in fast URL cache for future requests
-    cacheService.setCachedResultByUrlFast(url, response);
+    // Store in full cache system (both fast cache and database)
+    await cacheService.setCachedResultByUrl(url, response);
     
     res.json(response);
   } catch (error) {
@@ -251,7 +260,13 @@ exports.processBulkLinksForExtension = async (links, sessionId, alreadyProcessed
   for (const url of newLinks) {
     try {
       const { result } = await processSingleLink(url, sessionId, true);
-      verdicts[url] = convertToVerdict(result);
+      const verdict = convertToVerdict(result);
+      console.log(`[Link Processor] 🎯 Converting result for ${url}:`, {
+        isMalicious: result.isMalicious,
+        anomalyScore: result.anomalyScore,
+        verdict: verdict
+      });
+      verdicts[url] = verdict;
     } catch (linkError) {
       console.error(`[Link Processor] Error processing link ${url}:`, linkError);
       verdicts[url] = 'failed';

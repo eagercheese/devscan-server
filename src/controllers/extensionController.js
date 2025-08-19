@@ -54,6 +54,12 @@ exports.analyzeLinks = async (req, res) => {
     // RESPONSE GENERATION
     // ==============================
     // Send response to extension with processing results
+    console.log(`[Extension API] 📤 Sending verdicts to extension:`, {
+      verdictCount: Object.keys(processingResult.verdicts).length,
+      verdicts: processingResult.verdicts,
+      session_ID: currentSessionId
+    });
+    
     res.json({ 
       success: true,
       verdicts: processingResult.verdicts,

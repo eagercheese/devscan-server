@@ -28,6 +28,11 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Server is running.' });
 });
 
+// API health check endpoint specifically for extension
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'API is ready for extension requests.' });
+});
+
 // ML service health check endpoint
 app.get('/health/ml', async (req, res) => {
   try {
