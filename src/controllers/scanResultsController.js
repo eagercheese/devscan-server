@@ -3,11 +3,10 @@ const ScannedLink = require('../models/ScannedLink');
 const ScanSession = require('../models/ScanSession');
 const cacheService = require('../services/cacheService');
 
-// Internal helper function to create scan results
+// Internal helper function to create scan results (ML verdict format)
 async function createScanResultRecord(resultData) {
   try {
     const result = await ScanResults.create(resultData);
-    // Silent creation - only log errors
     return result;
   } catch (error) {
     console.error(`[Results Manager] Error creating scan result:`, error);
@@ -18,11 +17,11 @@ async function createScanResultRecord(resultData) {
 // Submit scan results for a scanned link (HTTP endpoint)
 exports.submitScanResult = async (req, res) => {
   try {
-    const { isMalicious, anomalyScore, classificationScore, intelMatch, link_ID, session_ID } = req.body;
+    const { final_verdict, confidence_score, anomaly_risk_level, explanation, tip, link_ID, session_ID } = req.body;
     if (
-      typeof isMalicious === 'undefined' ||
-      anomalyScore === undefined ||
-      classificationScore === undefined ||
+      !final_verdict ||
+      !confidence_score ||
+      !anomaly_risk_level ||
       !link_ID ||
       !session_ID
     ) {
@@ -35,10 +34,11 @@ exports.submitScanResult = async (req, res) => {
       return res.status(404).json({ error: 'Scanned link or session not found' });
     }
     const result = await createScanResultRecord({
-      isMalicious,
-      anomalyScore,
-      classificationScore,
-      intelMatch,
+      final_verdict,
+      confidence_score,
+      anomaly_risk_level,
+      explanation,
+      tip,
       link_ID,
       session_ID,
     });
@@ -84,25 +84,26 @@ exports.createResultWithCache = async (verdict, linkId, sessionId) => {
   try {
     // Store ML analysis result in database
     const result = await createScanResultRecord({
-      isMalicious: verdict.isMalicious,
-      anomalyScore: verdict.anomalyScore,
-      classificationScore: verdict.classificationScore,
-      intelMatch: verdict.intelMatch || 'none',
+      final_verdict: verdict.final_verdict,
+      confidence_score: verdict.confidence_score,
+      anomaly_risk_level: verdict.anomaly_risk_level,
+      explanation: verdict.explanation,
+      tip: verdict.tip,
       link_ID: linkId,
       session_ID: sessionId
     });
 
-    // Cache the ML result for future requests (ML analysis is expensive and benefits from caching)
+    // Cache the ML result for future requests
     await cacheService.setCachedResult({
       results_ID: result.result_ID,
       link_ID: linkId,
-      isMalicious: result.isMalicious,
-      anomalyScore: result.anomalyScore,
-      classificationScore: result.classificationScore,
-      admin_ID: null
+      final_verdict: result.final_verdict,
+      confidence_score: result.confidence_score,
+      anomaly_risk_level: result.anomaly_risk_level,
+      explanation: result.explanation,
+      tip: result.tip
     });
 
-    // Silent storage - only log errors
     return result;
   } catch (error) {
     console.error(`[Results Manager] Error creating result with cache for link ${linkId}:`, error);
@@ -114,15 +115,14 @@ exports.createResultWithCache = async (verdict, linkId, sessionId) => {
 exports.createWhitelistResult = async (whitelistResult, linkId, sessionId) => {
   try {
     const result = await createScanResultRecord({
-      isMalicious: false,
-      anomalyScore: 0.0,
-      classificationScore: 1.0,
-      intelMatch: `Whitelisted via ${whitelistResult.source}${whitelistResult.rank ? ` (rank: ${whitelistResult.rank})` : ''}`,
+      final_verdict: 'Whitelisted',
+      confidence_score: '100%',
+      anomaly_risk_level: 'Low',
+      explanation: `Whitelisted via ${whitelistResult.source}${whitelistResult.rank ? ` (rank: ${whitelistResult.rank})` : ''}`,
+      tip: 'This domain is whitelisted and considered safe.',
       link_ID: linkId,
       session_ID: sessionId
     });
-
-    // Silent whitelist storage - only log errors
     return result;
   } catch (error) {
     console.error(`[Results Manager] Error creating whitelist result for link ${linkId}:`, error);

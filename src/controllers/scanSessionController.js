@@ -62,7 +62,7 @@ exports.getOrCreateSession = async (sessionId, browserInfo, domain) => {
     if (browserInfo || domain) {
       const newSessionId = await createSession(
         browserInfo || `Extension scan from ${domain}`,
-        'v2.1.0'  // Use the engineVersion that exists in ScanEngine table
+        'DEVSCAN-4.0'  // Use the engineVersion that exists in ScanEngine table
       );
       return newSessionId;
     }

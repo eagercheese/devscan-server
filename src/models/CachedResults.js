@@ -1,13 +1,17 @@
+
 const { DataTypes } = require('sequelize');
 const sequelize = require('./index');
 const ScanResults = require('./ScanResults');
 const ScannedLink = require('./ScannedLink');
-const Admin = require('./Admin');
 
 const CachedResults = sequelize.define('CachedResults', {
+  id: {
+    type: DataTypes.INTEGER,
+    autoIncrement: true,
+    primaryKey: true
+  },
   results_ID: {
     type: DataTypes.INTEGER,
-    primaryKey: true,
     references: {
       model: ScanResults,
       key: 'result_ID',
@@ -15,25 +19,40 @@ const CachedResults = sequelize.define('CachedResults', {
   },
   link_ID: {
     type: DataTypes.INTEGER,
-    primaryKey: true,
     references: {
       model: ScannedLink,
       key: 'link_ID',
     },
   },
-  isMalicious: DataTypes.BOOLEAN,
-  anomalyScore: DataTypes.DECIMAL(5,2),
-  classificationScore: DataTypes.DECIMAL(5,2),
-  admin_ID: {
-    type: DataTypes.INTEGER,
-    references: {
-      model: Admin,
-      key: 'admin_ID',
-    },
+  final_verdict: {
+    type: DataTypes.STRING(32)
   },
+  confidence_score: {
+    type: DataTypes.STRING(16)
+  },
+  anomaly_risk_level: {
+    type: DataTypes.STRING(16)
+  },
+  explanation: {
+    type: DataTypes.TEXT
+  },
+  tip: {
+    type: DataTypes.TEXT
+  },
+  cacheSource: {
+    type: DataTypes.STRING(32),
+    defaultValue: 'ml_service'
+  },
+  lastScanned: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  expiresAt: {
+    type: DataTypes.DATE
+  }
 }, {
-  tableName: 'CachedResults',
-  timestamps: true,
+  tableName: 'cached_results',
+  timestamps: false,
 });
 
 // Define associations
@@ -45,11 +64,6 @@ CachedResults.belongsTo(ScannedLink, {
 CachedResults.belongsTo(ScanResults, { 
   foreignKey: 'results_ID',
   targetKey: 'result_ID'
-});
-
-CachedResults.belongsTo(Admin, { 
-  foreignKey: 'admin_ID',
-  targetKey: 'admin_ID'
 });
 
 module.exports = CachedResults;

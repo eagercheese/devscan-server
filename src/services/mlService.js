@@ -7,8 +7,8 @@ const axios = require('axios');
 // the JavaScript scanner and Python ML services
 
 // Default configuration
-const DEFAULT_ML_URL = 'http://localhost:3001/analyze';
-const DEFAULT_TIMEOUT = 60000; // 60 seconds for ML processing
+const DEFAULT_ML_URL = "";
+const DEFAULT_TIMEOUT = 120000; // 120 seconds (2 minutes) for ML processing
 
 // Service to send links to the ML model and get verdicts
 exports.analyzeLinks = async (links) => {
@@ -19,16 +19,27 @@ exports.analyzeLinks = async (links) => {
   try {
     console.log(`[ML Service] Analyzing ${links.length} links via Bridge API: ${mlServiceUrl}`);
     
-    const response = await axios.post(mlServiceUrl, { links }, {
+    const response = await axios.post(mlServiceUrl, { urls: links }, {
       timeout: timeout,
       headers: {
         'Content-Type': 'application/json'
       }
     });
-    
-    if (response.data && response.data.verdicts) {
-      console.log(`[ML Service] ✅ Successfully analyzed ${response.data.verdicts.length} links`);
-      return response.data;
+    // Expecting response.data.results (array of ML verdicts)
+    if (response.data && Array.isArray(response.data.results)) {
+      // Map each result to the expected format for the rest of the backend
+      const verdicts = response.data.results.map(result => ({
+        url: result.url,
+        final_verdict: result.final_verdict,
+        confidence_score: result.confidence_score,
+        anomaly_risk_level: result.anomaly_risk_level,
+        explanation: result.explanation,
+        tip: result.tip,
+        features: result.features,
+        anomaly_score: result.anomaly_score
+      }));
+      console.log(`[ML Service] ✅ Successfully analyzed ${verdicts.length} links`);
+      return { verdicts };
     } else {
       throw new Error('Invalid response format from ML service');
     }

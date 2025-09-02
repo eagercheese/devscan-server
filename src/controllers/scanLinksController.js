@@ -114,10 +114,14 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     // STEP 3: MACHINE LEARNING ANALYSIS
     // ==============================
     let verdict = {
-      isMalicious: true,
-      anomalyScore: 0.9,
-      classificationScore: 0.9,
-      intelMatch: 'none'
+  final_verdict: 'Unknown',
+  confidence_score: '0%',
+  anomaly_risk_level: 'Unknown',
+  explanation: '',
+  tip: '',
+  cacheSource: '',
+  lastScanned: null,
+  expiresAt: null
     };
     // for trial
     // return { verdict, fromCache: false, whitelisted: false };
@@ -125,8 +129,8 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     try {
       const mlResponse = await mlService.analyzeLinks([url]);
       if (mlResponse && mlResponse.verdicts && mlResponse.verdicts[0]) {
-        verdict = mlResponse.verdicts[0];
-        console.log(`\n[Link Processor] 🤖 ML analysis: ${url} -> ${verdict.isMalicious ? 'MALICIOUS' : 'SAFE'} (score: ${verdict.anomalyScore.toFixed(3)})`);
+  verdict = mlResponse.verdicts[0];
+  console.log(`\n[Link Processor] 🤖 ML analysis: ${url} -> ${verdict.final_verdict} (confidence: ${verdict.confidence_score}, risk: ${verdict.anomaly_risk_level})`);
       }
     } catch (mlError) {
       console.warn(`\n[Link Processor] ⚠️ ML service unavailable, using default verdict for ${url}`);
@@ -136,10 +140,14 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     const result = shouldCache 
       ? await scanResultsController.createResultWithCache(verdict, link.link_ID, sessionId)
       : await ScanResults.create({
-          isMalicious: verdict.isMalicious,
-          anomalyScore: verdict.anomalyScore,
-          classificationScore: verdict.classificationScore,
-          intelMatch: verdict.intelMatch || 'none',
+          final_verdict: verdict.final_verdict,
+          confidence_score: verdict.confidence_score,
+          anomaly_risk_level: verdict.anomaly_risk_level,
+          explanation: verdict.explanation,
+          tip: verdict.tip,
+          cacheSource: verdict.cacheSource,
+          lastScanned: verdict.lastScanned,
+          expiresAt: verdict.expiresAt,
           link_ID: link.link_ID,
           session_ID: sessionId
         });
@@ -213,10 +221,14 @@ exports.scanLink = async (req, res) => {
     if (cachedResult) {
       console.log('💾 Cache hit for URL:', url);
       return res.json({
-        isMalicious: cachedResult.isMalicious,
-        anomalyScore: parseFloat(cachedResult.anomalyScore),
-        classificationScore: parseFloat(cachedResult.classificationScore),
-        intelMatch: cachedResult.intelMatch,
+        final_verdict: cachedResult.final_verdict,
+        confidence_score: cachedResult.confidence_score,
+        anomaly_risk_level: cachedResult.anomaly_risk_level,
+        explanation: cachedResult.explanation,
+        tip: cachedResult.tip,
+        cacheSource: cachedResult.cacheSource,
+        lastScanned: cachedResult.lastScanned,
+        expiresAt: cachedResult.expiresAt,
         cached: true,
         whitelisted: cachedResult.whitelisted || false
       });
@@ -225,10 +237,14 @@ exports.scanLink = async (req, res) => {
     const { result, fromCache, whitelisted } = await processSingleLink(url, null, false);
     
     const response = {
-      isMalicious: result.isMalicious,
-      anomalyScore: parseFloat(result.anomalyScore),
-      classificationScore: parseFloat(result.classificationScore),
-      intelMatch: result.intelMatch,
+      final_verdict: result.final_verdict,
+      confidence_score: result.confidence_score,
+      anomaly_risk_level: result.anomaly_risk_level,
+      explanation: result.explanation,
+      tip: result.tip,
+      cacheSource: result.cacheSource,
+      lastScanned: result.lastScanned,
+      expiresAt: result.expiresAt,
       cached: fromCache,
       whitelisted: whitelisted || false
     };
@@ -236,7 +252,7 @@ exports.scanLink = async (req, res) => {
     // Store in full cache system (both fast cache and database)
     await cacheService.setCachedResultByUrl(url, response);
     
-    res.json(response);
+  res.json(response);
   } catch (error) {
     console.error('Error in scanLink:', error);
     res.status(500).json({ error: 'Failed to scan link', details: error.message });
@@ -258,19 +274,15 @@ exports.processBulkLinksForExtension = async (links, sessionId, alreadyProcessed
   
   // Process only new links through the centralized security pipeline
   for (const url of newLinks) {
-    try {
-      const { result } = await processSingleLink(url, sessionId, true);
-      const verdict = convertToVerdict(result);
-      console.log(`[Link Processor] 🎯 Converting result for ${url}:`, {
-        isMalicious: result.isMalicious,
-        anomalyScore: result.anomalyScore,
-        verdict: verdict
-      });
-      verdicts[url] = verdict;
-    } catch (linkError) {
-      console.error(`[Link Processor] Error processing link ${url}:`, linkError);
-      verdicts[url] = 'failed';
-    }
+      try {
+        const { result } = await processSingleLink(url, sessionId, true);
+        const verdict = convertToVerdict(result);
+        console.log(`[Link Processor] 🎯 Converting result for ${url}:`, verdict);
+        verdicts[url] = verdict;
+      } catch (linkError) {
+        console.error(`[Link Processor] Error processing link ${url}:`, linkError);
+        verdicts[url] = 'failed';
+      }
   }
   
   return {
@@ -280,21 +292,28 @@ exports.processBulkLinksForExtension = async (links, sessionId, alreadyProcessed
   };
 };
 
-// Helper function to convert scan results to extension-friendly verdict categories
+// Helper function to convert scan results to extension-friendly verdict object
 function convertToVerdict(scanResult) {
-  if (scanResult.isMalicious) {
-    return 'malicious';
+  // If scanResult is null or failed, return a default verdict
+  if (!scanResult || typeof scanResult !== 'object') {
+    return {
+      final_verdict: 'Scan Failed',
+      confidence_score: '0%',
+      anomaly_risk_level: 'Unknown',
+      explanation: 'Unable to scan this link at the moment.',
+      tip: 'The scanning service is temporarily unavailable.'
+    };
   }
-  
-  const anomalyScore = parseFloat(scanResult.anomalyScore);
-  
-  if (anomalyScore > 0.7) {
-    return 'danger';
-  } else if (anomalyScore > 0.5) {
-    return 'warning';
-  } else if (anomalyScore > 0.3) {
-    return 'anomalous';
-  } else {
-    return 'safe';
-  }
+
+  // Return the full ML verdict object if available
+  return {
+    final_verdict: scanResult.final_verdict || 'Unknown',
+    confidence_score: scanResult.confidence_score || '0%',
+    anomaly_risk_level: scanResult.anomaly_risk_level || 'Unknown',
+    explanation: scanResult.explanation || '',
+    tip: scanResult.tip || '',
+    cacheSource: scanResult.cacheSource || '',
+    lastScanned: scanResult.lastScanned || null,
+    expiresAt: scanResult.expiresAt || null
+  };
 }

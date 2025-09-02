@@ -31,12 +31,12 @@ async function testDatabaseConnection() {
   if (isDatabaseAvailable !== null) {
     return isDatabaseAvailable;
   }
-  
+
   if (!loadModels()) {
     isDatabaseAvailable = false;
     return false;
   }
-  
+
   try {
     await sequelize.authenticate();
     console.log('[CacheService] ✅ Database connection established');
@@ -48,6 +48,31 @@ async function testDatabaseConnection() {
     return false;
   }
 }
+
+// Move expired cached results to deleted_cached_links and delete from cached_results
+exports.cleanExpiredCache = async () => {
+  const dbAvailable = await testDatabaseConnection();
+  if (dbAvailable) {
+    try {
+      // Move expired cache to deleted_cached_links
+      await sequelize.query(`
+        INSERT INTO deleted_cached_links (url, final_verdict, confidence_score, anomaly_risk_level, explanation, tip, cacheSource, lastScanned, expiresAt)
+        SELECT url, final_verdict, confidence_score, anomaly_risk_level, explanation, tip, cacheSource, lastScanned, expiresAt
+        FROM cached_results
+        WHERE expiresAt < NOW();
+      `);
+      // Delete expired cache
+      const [result] = await sequelize.query(`
+        DELETE FROM cached_results WHERE expiresAt < NOW();
+      `);
+      console.log(`[CacheService] 🧹 Moved and deleted expired cache entries`);
+      return result;
+    } catch (error) {
+      console.warn('[CacheService] Failed to clean expired cache:', error.message);
+    }
+  }
+  return 0;
+};
 
 // Check cache for a link by URL (primary method)
 exports.getCachedResultByUrl = async (url) => {
@@ -78,10 +103,14 @@ exports.getCachedResultByUrl = async (url) => {
         console.log(`[CacheService] 🗄️ Database cache hit for ${url}`);
         // Store in fast cache for next time
         const resultData = {
-          isMalicious: result.isMalicious,
-          anomalyScore: result.anomalyScore,
-          classificationScore: result.classificationScore,
-          intelMatch: result.intelMatch,
+          final_verdict: result.final_verdict,
+          confidence_score: result.confidence_score,
+          anomaly_risk_level: result.anomaly_risk_level,
+          explanation: result.explanation,
+          tip: result.tip,
+          cacheSource: result.cacheSource,
+          lastScanned: result.lastScanned,
+          expiresAt: result.expiresAt,
           cached: true
         };
         urlCache.set(url, {
@@ -158,20 +187,21 @@ exports.setCachedResultByUrlFast = (url, result) => {
 exports.setCachedResultByUrl = async (url, result) => {
   // Store in fast URL cache immediately
   const resultData = {
-    isMalicious: result.isMalicious,
-    anomalyScore: result.anomalyScore,
-    classificationScore: result.classificationScore,
-    intelMatch: result.intelMatch,
-    cached: true,
-    whitelisted: result.whitelisted || false
+    final_verdict: result.final_verdict,
+    confidence_score: result.confidence_score,
+    anomaly_risk_level: result.anomaly_risk_level,
+    explanation: result.explanation,
+    tip: result.tip,
+    cacheSource: result.cacheSource,
+    lastScanned: result.lastScanned,
+    expiresAt: result.expiresAt,
+    cached: true
   };
-  
   urlCache.set(url, {
     data: resultData,
     timestamp: Date.now()
   });
   console.log(`[CacheService] ⚡ Stored result in fast URL cache for ${url}`);
-  
   // Also store in memory cache using URL as key
   const cacheKey = `url_${url}`;
   memoryCache.set(cacheKey, {
@@ -179,32 +209,35 @@ exports.setCachedResultByUrl = async (url, result) => {
     timestamp: Date.now()
   });
   console.log(`[CacheService] 💾 Stored result in memory cache for URL ${url}`);
-  
   return resultData;
 };
 
-// Store ML analysis result in cache
+// Store ML analysis result in cache with 7-day expiry
 exports.setCachedResult = async (result) => {
   const dbAvailable = await testDatabaseConnection();
-  
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + SEVEN_DAYS_MS);
+  result.expiresAt = expiresAt;
+
   if (dbAvailable) {
     try {
       // Validate that the foreign key references exist before inserting
       if (result.results_ID && result.link_ID) {
         const existingResult = await ScanResults.findByPk(result.results_ID);
         const existingLink = await ScannedLink.findByPk(result.link_ID);
-        
+
         if (existingResult && existingLink) {
           const cached = await CachedResults.create(result);
           console.log(`[CacheService] ✅ Stored result in database cache for link ${result.link_ID}\n`);
-          
+
           // Also store in memory cache for faster access
           const cacheKey = `result_${result.link_ID}`;
           memoryCache.set(cacheKey, {
             data: cached,
             timestamp: Date.now()
           });
-          
+
           return cached;
         } else {
           console.warn(`[CacheService] ⚠️ Foreign key validation failed - ScanResult: ${!!existingResult}, ScannedLink: ${!!existingLink}`);
@@ -218,7 +251,7 @@ exports.setCachedResult = async (result) => {
       console.warn('[CacheService] Database cache failed, using memory cache:', error.message);
     }
   }
-  
+
   // Memory cache fallback (always works)
   const cacheKey = `result_${result.link_ID}`;
   memoryCache.set(cacheKey, {
