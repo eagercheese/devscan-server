@@ -128,12 +128,16 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
 
     try {
       const mlResponse = await mlService.analyzeLinks([url]);
-      if (mlResponse && mlResponse.verdicts && mlResponse.verdicts[0]) {
-  verdict = mlResponse.verdicts[0];
-  console.log(`\n[Link Processor] 🤖 ML analysis: ${url} -> ${verdict.final_verdict} (confidence: ${verdict.confidence_score}, risk: ${verdict.anomaly_risk_level})`);
+      if (mlResponse && mlResponse.verdicts && Array.isArray(mlResponse.verdicts) && mlResponse.verdicts.length > 0) {
+        verdict = mlResponse.verdicts[0];
+        console.log(`\n[Link Processor] 🤖 ML analysis: ${url} -> ${verdict.final_verdict} (confidence: ${verdict.confidence_score}, risk: ${verdict.anomaly_risk_level})`);
+      } else {
+        console.warn(`\n[Link Processor] ⚠️ ML service returned unexpected format for ${url}, trying individual fallback...`);
+        verdict = await mlService.analyzeLinkWithFallback(url);
       }
     } catch (mlError) {
-      console.warn(`\n[Link Processor] ⚠️ ML service unavailable, using default verdict for ${url}`);
+      console.error(`\n[Link Processor] ⚠️ ML service error for ${url}, trying fallback:`, mlError.message);
+      verdict = await mlService.analyzeLinkWithFallback(url);
     }
 
     // Store result with caching if requested

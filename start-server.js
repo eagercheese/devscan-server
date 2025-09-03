@@ -13,7 +13,7 @@ require('dotenv').config();
 // Import main application and database connection
 const app = require('./src/app');
 const sequelize = require('./src/models');
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Startup logging for debugging
 console.log('Starting DEVScan Server...');
