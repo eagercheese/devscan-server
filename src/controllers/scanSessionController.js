@@ -1,34 +1,8 @@
 const ScanSession = require('../models/ScanSession');
 
-// Create a new scan session (HTTP endpoint)
-exports.createScanSession = async (req, res) => {
-  try {
-    const { browserInfo, engineVersion } = req.body;
-    if (!browserInfo || !engineVersion) {
-      return res.status(400).json({ error: 'browserInfo and engineVersion are required' });
-    }
-    const session = await ScanSession.create({
-      browserInfo,
-      engineVersion,
-      timestamp: new Date(),
-    });
-    res.status(201).json(session);
-  } catch (error) {
-    console.error('Error creating scan session:', error);
-    res.status(500).json({ error: 'Failed to create scan session' });
-  }
-};
-
-// Get all scan sessions (HTTP endpoint)
-exports.getAllScanSessions = async (req, res) => {
-  try {
-    const sessions = await ScanSession.findAll();
-    res.json(sessions);
-  } catch (error) {
-    console.error('Error fetching scan sessions:', error);
-    res.status(500).json({ error: 'Failed to fetch scan sessions' });
-  }
-};
+// ==============================
+// INTERNAL HELPER FUNCTIONS
+// ==============================
 
 // Internal helper function to create a session (used by other controllers)
 async function createSession(browserInfo, engineVersion) {
@@ -45,6 +19,10 @@ async function createSession(browserInfo, engineVersion) {
     throw error;
   }
 }
+
+// ==============================
+// CORE FUNCTIONS FOR EXTENSION
+// ==============================
 
 // Get existing session or create new one for extension requests
 exports.getOrCreateSession = async (sessionId, browserInfo, domain) => {
@@ -72,5 +50,53 @@ exports.getOrCreateSession = async (sessionId, browserInfo, domain) => {
   } catch (sessionError) {
     console.warn('[Session Manager] Failed to get or create session:', sessionError.message);
     return null;
+  }
+};
+
+// ==============================
+// LEGACY HTTP ENDPOINTS (STUBS)
+// ==============================
+// These are kept for backward compatibility but not actively used by the extension
+
+// Create a new scan session (legacy)
+exports.createScanSession = async (req, res) => {
+  res.status(501).json({ 
+    error: 'Legacy endpoint - sessions are managed automatically',
+    message: 'Session creation is handled automatically by the extension API'
+  });
+};
+
+// Get all scan sessions (legacy)
+exports.getAllScanSessions = async (req, res) => {
+  res.status(501).json({ 
+    error: 'Legacy endpoint - use extension API instead',
+    message: 'Session retrieval is handled by the optimized extension API'
+  });
+};
+
+// ==============================
+// LEGACY HTTP ENDPOINTS (MINIMAL STUBS)
+// ==============================
+
+// Create scan session (HTTP endpoint - legacy)
+exports.createScanSession = async (req, res) => {
+  try {
+    const { browserInfo, engineVersion } = req.body;
+    const sessionId = await createSession(browserInfo, engineVersion);
+    res.status(201).json({ session_ID: sessionId });
+  } catch (error) {
+    console.error('Error creating scan session:', error);
+    res.status(500).json({ error: 'Failed to create scan session' });
+  }
+};
+
+// Get all scan sessions (HTTP endpoint - legacy)
+exports.getAllScanSessions = async (req, res) => {
+  try {
+    const sessions = await ScanSession.findAll();
+    res.json(sessions);
+  } catch (error) {
+    console.error('Error fetching scan sessions:', error);
+    res.status(500).json({ error: 'Failed to fetch scan sessions' });
   }
 };

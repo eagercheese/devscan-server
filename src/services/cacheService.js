@@ -1,5 +1,5 @@
 // Lazy load database models to avoid startup crashes
-let CachedResults, ScannedLink, ScanResults, sequelize;
+let CachedResults, ScannedLink, ScanResults, sequelize, Sequelize;
 let modelsLoaded = false;
 
 function loadModels() {
@@ -9,6 +9,7 @@ function loadModels() {
       ScannedLink = require('../models/ScannedLink');
       ScanResults = require('../models/ScanResults');
       sequelize = require('../models/index');
+      Sequelize = require('sequelize');
       modelsLoaded = true;
       console.log('[CacheService] 📚 Database models loaded successfully');
     } catch (error) {
@@ -79,28 +80,42 @@ exports.getCachedResultByUrl = async (url) => {
   // First check the fast in-memory URL cache
   const fastCached = urlCache.get(url);
   if (fastCached && (Date.now() - fastCached.timestamp) < URL_CACHE_TTL) {
-    console.log(`[CacheService] ⚡ Fast URL cache hit for ${url}`);
+    // Fast cache hit - already processed
     return fastCached.data;
   }
 
-  // Then check database cache by URL
+  // Then check database cache by URL (direct lookup - much faster!)
   const dbAvailable = await testDatabaseConnection();
   
   if (dbAvailable) {
     try {
-      // Find the most recent scan result for this URL
-      const result = await CachedResults.findOne({
-        include: [{
-          model: ScannedLink,
-          where: { url: url },
-          required: true
-        }],
-        order: [['createdAt', 'DESC']],
+      // Try direct URL lookup first (new format)
+      let result = await CachedResults.findOne({
+        where: { 
+          url: url,
+          expiresAt: {
+            [Sequelize.Op.gt]: new Date() // Only get non-expired results
+          }
+        },
+        order: [['lastScanned', 'DESC']],
         limit: 1
       });
       
+      // Fallback to join-based lookup (old format) if no direct URL result
+      if (!result) {
+        result = await CachedResults.findOne({
+          include: [{
+            model: ScannedLink,
+            where: { url: url },
+            required: true
+          }],
+          order: [['lastScanned', 'DESC']],
+          limit: 1
+        });
+      }
+      
       if (result) {
-        console.log(`[CacheService] 🗄️ Database cache hit for ${url}`);
+        // Database cache hit - result found
         // Store in fast cache for next time
         const resultData = {
           final_verdict: result.final_verdict,
@@ -128,7 +143,7 @@ exports.getCachedResultByUrl = async (url) => {
   const cacheKey = `url_${url}`;
   const cached = memoryCache.get(cacheKey);
   if (cached && (Date.now() - cached.timestamp) < MEMORY_CACHE_TTL) {
-    console.log(`[CacheService] 💾 Memory cache hit for URL ${url}`);
+    // Memory cache hit for URL
     return cached.data;
   }
   
@@ -180,7 +195,7 @@ exports.setCachedResultByUrlFast = (url, result) => {
     data: result,
     timestamp: Date.now()
   });
-  console.log(`[CacheService] ⚡ Stored result in fast URL cache for ${url}`);
+  // Fast cache updated
 };
 
 // Store result in cache by URL (primary method)
@@ -201,19 +216,18 @@ exports.setCachedResultByUrl = async (url, result) => {
     data: resultData,
     timestamp: Date.now()
   });
-  console.log(`[CacheService] ⚡ Stored result in fast URL cache for ${url}`);
   // Also store in memory cache using URL as key
   const cacheKey = `url_${url}`;
   memoryCache.set(cacheKey, {
     data: resultData,
     timestamp: Date.now()
   });
-  console.log(`[CacheService] 💾 Stored result in memory cache for URL ${url}`);
+  // Memory cache updated
   return resultData;
 };
 
 // Store ML analysis result in cache with 7-day expiry
-exports.setCachedResult = async (result) => {
+exports.setCachedResult = async (result, url = null) => {
   const dbAvailable = await testDatabaseConnection();
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
   const now = new Date();
@@ -228,17 +242,47 @@ exports.setCachedResult = async (result) => {
         const existingLink = await ScannedLink.findByPk(result.link_ID);
 
         if (existingResult && existingLink) {
-          const cached = await CachedResults.create(result);
-          console.log(`[CacheService] ✅ Stored result in database cache for link ${result.link_ID}\n`);
+          // Get URL from ScannedLink if not provided
+          const urlToCache = url || existingLink.url;
+          
+          const cacheData = {
+            ...result,
+            url: urlToCache // Add URL to new records, will be null for existing records
+          };
+          
+          // Try to create the cached result, fall back gracefully if URL constraint fails
+          try {
+            const cached = await CachedResults.create(cacheData);
+            console.log(`[CacheService] ✅ Stored result in database cache for ${urlToCache} (link ${result.link_ID})`);
 
-          // Also store in memory cache for faster access
-          const cacheKey = `result_${result.link_ID}`;
-          memoryCache.set(cacheKey, {
-            data: cached,
-            timestamp: Date.now()
-          });
+            // Also store in memory cache for faster access
+            const cacheKey = `result_${result.link_ID}`;
+            memoryCache.set(cacheKey, {
+              data: cached,
+              timestamp: Date.now()
+            });
 
-          return cached;
+            return cached;
+          } catch (createError) {
+            // If URL constraint fails, try without URL (backward compatibility)
+            if (createError.message.includes('url')) {
+              console.warn('[CacheService] ⚠️ URL field not supported, storing without URL');
+              const cacheDataWithoutUrl = { ...result };
+              delete cacheDataWithoutUrl.url;
+              
+              const cached = await CachedResults.create(cacheDataWithoutUrl);
+              console.log(`[CacheService] ✅ Stored result in database cache (no URL) for link ${result.link_ID}`);
+              
+              const cacheKey = `result_${result.link_ID}`;
+              memoryCache.set(cacheKey, {
+                data: cached,
+                timestamp: Date.now()
+              });
+              return cached;
+            } else {
+              throw createError;
+            }
+          }
         } else {
           console.warn(`[CacheService] ⚠️ Foreign key validation failed - ScanResult: ${!!existingResult}, ScannedLink: ${!!existingLink}`);
           throw new Error('Foreign key references do not exist');
