@@ -9,10 +9,20 @@ const ScanResults = require('../models/ScanResults');
 // HELPER FUNCTIONS FOR MALICIOUS URL DETECTION
 // ==============================
 const suspiciousKeywords = [
-  "redirect", "target", "dest", "goto",
-  "login", "verify", "account", "secure", "update",
-  ".exe", ".zip", ".scr", ".apk", ".php",
-  "javascript:", "data:", "base64"
+  // Redirect patterns (most common attack vector)
+  "redirect", "target", "dest", "goto", "url?q=", "r=", "return=", 
+  
+  // Login/account phishing patterns  
+  "login", "verify", "account", "secure", "update", "signin", "auth",
+  
+  // File download patterns
+  ".exe", ".zip", ".scr", ".apk", ".php", ".bat", ".cmd", ".msi",
+  
+  // Script injection patterns
+  "javascript:", "data:", "base64", "eval(", "script>",
+  
+  // Additional suspicious patterns from malicious URL research
+  "download", "click=", "token=", "session=", "auth=", "key="
 ];
 
 function checkValue(label, decodedValue) {
@@ -69,7 +79,12 @@ function isUrlMalicious(url) {
 // ==============================
 // CORE LINK PROCESSING FUNCTION
 // ==============================
-// Optimized sequence: WHITELIST → CACHE → ML ANALYSIS
+// Optimized security pipeline: WHITELIST → PATTERN CHECK → CACHE → ML ANALYSIS
+// 1. Top 1K domains without suspicious patterns → Safe immediately
+// 2. Top 1K domains with suspicious patterns → Cache check → ML if not cached  
+// 3. Manual whitelist domains without suspicious patterns → Safe immediately
+// 4. Manual whitelist domains with suspicious patterns → Cache check → ML if not cached
+// 5. Non-whitelisted domains → Cache check → ML if not cached
 async function processSingleLink(url, sessionId = null, shouldCache = true) {
   const scanResultsController = require('./scanResultsController');
   const scannedLinkController = require('./scannedLinkController');
@@ -89,19 +104,37 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     if (whitelistResult.isWhitelisted) {
       console.log(`[Link Processor] ✅ Whitelisted: ${url} (${whitelistResult.reason})`);
       
-      // Additional malicious pattern check for whitelisted URLs
-      if (!isUrlMalicious(url)) {
-        console.log(`[Link Processor] ✅ Whitelisted and Verified: ${url}`);
-        const result = await scanResultsController.createWhitelistResult(whitelistResult, link.link_ID, sessionId);
-        return { result, fromCache: false, whitelisted: true };
+      // For top 1000 Tranco domains, check for suspicious patterns
+      if (whitelistResult.source === 'local_tranco') {
+        const hasSuspiciousPatterns = isUrlMalicious(url);
+        
+        if (!hasSuspiciousPatterns) {
+          // Top 1K domain with clean URL patterns - mark as safe immediately
+          console.log(`[Link Processor] ✅ Top 1K domain with clean patterns - Safe: ${url}`);
+          const result = await scanResultsController.createWhitelistResult(whitelistResult, link.link_ID, sessionId);
+          return { result, fromCache: false, whitelisted: true };
+        } else {
+          // Top 1K domain but with suspicious patterns - continue to cache/ML analysis
+          console.log(`[Link Processor] ⚠️ Top 1K domain but contains suspicious patterns, proceeding to analysis: ${url}`);
+          // Continue to cache check and ML analysis
+        }
       } else {
-        console.log(`[Link Processor] ⚠️ Whitelisted but contains suspicious patterns: ${url}`);
-        // Continue to ML analysis despite whitelist
+        // Manual whitelist entries - still need pattern check for security
+        const hasSuspiciousPatterns = isUrlMalicious(url);
+        
+        if (!hasSuspiciousPatterns) {
+          console.log(`[Link Processor] ✅ Manually whitelisted domain with clean patterns - Safe: ${url}`);
+          const result = await scanResultsController.createWhitelistResult(whitelistResult, link.link_ID, sessionId);
+          return { result, fromCache: false, whitelisted: true };
+        } else {
+          console.log(`[Link Processor] ⚠️ Manually whitelisted domain but contains suspicious patterns, proceeding to analysis: ${url}`);
+          // Continue to cache check and ML analysis even for manual whitelist
+        }
       }
     }
     
     // ==============================
-    // STEP 2: CACHE CHECK (ONLY FOR ML RESULTS)
+    // STEP 2: CACHE CHECK (FOR NON-SAFE WHITELISTED + NON-WHITELISTED URLs)
     // ==============================
     console.log(`[Link Processor] 💾 Checking cache for: ${url}`);
     const urlCached = await cacheService.getCachedResultByUrl(url);
@@ -119,9 +152,13 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
 
     
     // ==============================
-    // STEP 3: MACHINE LEARNING ANALYSIS (ONLY ML RESULTS GET CACHED)
+    // STEP 3: MACHINE LEARNING ANALYSIS (FOR UNCACHED URLs)
     // ==============================
-    console.log(`[Link Processor] 🤖 Sending to ML analysis: ${url}`);
+    if (whitelistResult.isWhitelisted && whitelistResult.source === 'local_tranco') {
+      console.log(`[Link Processor] 🤖 Sending top 1K domain with suspicious patterns to ML: ${url}`);
+    } else {
+      console.log(`[Link Processor] 🤖 Sending non-whitelisted URL to ML analysis: ${url}`);
+    }
     
     let verdict = {
       final_verdict: 'Unknown',
@@ -149,7 +186,7 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     }
 
     // ==============================
-    // STEP 4: CACHE ML RESULTS ONLY (NOT WHITELIST RESULTS)
+    // STEP 4: CACHE ML RESULTS (NOT WHITELIST RESULTS)
     // ==============================
     console.log(`[Link Processor] 💾 Caching ML result for: ${url}`);
     const result = shouldCache 

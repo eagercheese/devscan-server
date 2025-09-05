@@ -7,12 +7,16 @@ const ScanSession = require('../models/ScanSession');
 // Internal helper function to create a session (used by other controllers)
 async function createSession(browserInfo, engineVersion) {
   try {
+    // Add more identifying information
+    const timestamp = new Date();
+    const enhancedBrowserInfo = `${browserInfo} | Created: ${timestamp.toISOString()}`;
+    
     const session = await ScanSession.create({
-      browserInfo,
+      browserInfo: enhancedBrowserInfo,
       engineVersion,
-      timestamp: new Date(),
+      timestamp,
     });
-    console.log(`[Session Manager] Created new session: ${session.session_ID}`);
+    console.log(`[Session Manager] Created new session: ${session.session_ID} for ${enhancedBrowserInfo}`);
     return session.session_ID;
   } catch (error) {
     console.error('[Session Manager] Failed to create session:', error.message);

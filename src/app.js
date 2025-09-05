@@ -16,8 +16,10 @@ const PORT = process.env.PORT || 3000;
 // ==============================
 // Enable CORS for browser extension requests
 app.use(cors());
-// Parse JSON request bodies
-app.use(express.json());
+// Parse JSON request bodies with increased payload limits
+app.use(express.json({ limit: '10mb' }));
+// Set server timeout to 3 minutes to handle long ML processing
+app.timeout = 180000; // 3 minutes
 
 // ==============================
 // UTILITY ENDPOINTS

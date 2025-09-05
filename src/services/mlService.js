@@ -8,9 +8,9 @@ const axios = require('axios');
 
 // Default configuration
 const DEFAULT_ML_URL = "http://localhost:8000/extract";
-const DEFAULT_TIMEOUT = 30000; // 30 seconds (reduced from 120)
-const DEFAULT_RETRY_ATTEMPTS = 2; // Reduced from 3
-const DEFAULT_RETRY_DELAY = 1000; // 1 second (reduced from 2)
+const DEFAULT_TIMEOUT = 90000; // 90 seconds (increased from 30 seconds)
+const DEFAULT_RETRY_ATTEMPTS = 2; // Keep at 2
+const DEFAULT_RETRY_DELAY = 2000; // 2 seconds (increased from 1 second)
 
 // Utility function to delay execution
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -34,10 +34,11 @@ exports.analyzeLinks = async (links) => {
   );
   
   if (hasProblematicUrl) {
-    console.warn(`[ML Service] ⚠️ Detected potentially problematic URL pattern, using reduced retries`);
-    // Use only 1 attempt for known problematic URLs
+    console.warn(`[ML Service] ⚠️ Detected potentially problematic URL pattern, using reduced retries but longer timeout`);
+    // Use only 1 attempt for known problematic URLs but give it more time
     const reducedRetries = 1;
-    return await performAnalysisWithRetry(links, mlServiceUrl, timeout, reducedRetries, retryDelay);
+    const extendedTimeout = timeout * 1.5; // 50% longer timeout for problematic URLs
+    return await performAnalysisWithRetry(links, mlServiceUrl, extendedTimeout, reducedRetries, retryDelay);
   }
 
   return await performAnalysisWithRetry(links, mlServiceUrl, timeout, maxRetries, retryDelay);

@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const extensionController = require('../controllers/extensionController');
 const whitelistService = require('../services/whitelistService');
+const { validateSession, rateLimitBySession } = require('../middleware/sessionValidation');
+
+// Apply session validation and rate limiting to all extension routes
+router.use(validateSession);
+router.use(rateLimitBySession(500, 60 * 60 * 1000)); // 500 requests per hour per session
 
 // POST /api/extension/analyze - Main endpoint for extension link analysis
 router.post('/analyze', extensionController.analyzeLinks);
