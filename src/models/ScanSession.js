@@ -4,9 +4,9 @@ const ScanEngine = require('./ScanEngine');
 
 const ScanSession = sequelize.define('ScanSession', {
   session_ID: {
-    type: DataTypes.UUID,
+    type: DataTypes.INTEGER,
     primaryKey: true,
-    defaultValue: DataTypes.UUIDV4,
+    autoIncrement: true,
   },
   browserInfo: DataTypes.STRING(255),
   timestamp: DataTypes.DATE,
