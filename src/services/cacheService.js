@@ -228,6 +228,13 @@ exports.setCachedResultByUrl = async (url, result) => {
 
 // Store ML analysis result in cache with 7-day expiry
 exports.setCachedResult = async (result, url = null) => {
+  // Don't cache failed scan results - only cache successful ML analysis (Safe, Anomalous, Malicious)
+  const validVerdicts = ['Safe', 'Anomalous', 'Malicious'];
+  if (!validVerdicts.includes(result.final_verdict)) {
+    console.log(`[CacheService] ⚠️ Skipping cache for non-successful verdict: ${result.final_verdict}`);
+    return result; // Return the result without caching
+  }
+
   const dbAvailable = await testDatabaseConnection();
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
   const now = new Date();
@@ -244,6 +251,23 @@ exports.setCachedResult = async (result, url = null) => {
         if (existingResult && existingLink) {
           // Get URL from ScannedLink if not provided
           const urlToCache = url || existingLink.url;
+          
+          // Check if this URL already has a recent cached result to prevent duplicates
+          const existingCache = await CachedResults.findOne({
+            where: { 
+              url: urlToCache,
+              final_verdict: result.final_verdict, // Same verdict
+              expiresAt: {
+                [Sequelize.Op.gt]: new Date() // Still valid
+              }
+            },
+            order: [['lastScanned', 'DESC']]
+          });
+
+          if (existingCache) {
+            console.log(`[CacheService] ⚠️ Duplicate cache entry prevented for ${urlToCache} with verdict ${result.final_verdict}`);
+            return existingCache; // Return existing cache instead of creating duplicate
+          }
           
           const cacheData = {
             ...result,
@@ -304,6 +328,56 @@ exports.setCachedResult = async (result, url = null) => {
   });
   console.log(`[CacheService] 💾 Stored result in memory cache for link ${result.link_ID}`);
   return result;
+};
+
+// Clean up failed scan results from cache (should not be cached)
+exports.cleanupFailedScans = async () => {
+  const dbAvailable = await testDatabaseConnection();
+  if (!dbAvailable) {
+    console.log('[CacheService] 💾 Database unavailable, cleaning memory cache only');
+    // Clean memory cache
+    for (const [key, cached] of memoryCache.entries()) {
+      if (cached.data && cached.data.final_verdict === 'Scan Failed') {
+        memoryCache.delete(key);
+        console.log(`[CacheService] 🗑️ Removed failed scan from memory cache: ${key}`);
+      }
+    }
+    for (const [key, cached] of urlCache.entries()) {
+      if (cached.data && cached.data.final_verdict === 'Scan Failed') {
+        urlCache.delete(key);
+        console.log(`[CacheService] 🗑️ Removed failed scan from URL cache: ${key}`);
+      }
+    }
+    return;
+  }
+
+  try {
+    // Remove failed scan results from database cache
+    const deletedCount = await CachedResults.destroy({
+      where: {
+        final_verdict: 'Scan Failed'
+      }
+    });
+    
+    if (deletedCount > 0) {
+      console.log(`[CacheService] 🗑️ Cleaned up ${deletedCount} failed scan cache entries from database`);
+    }
+    
+    // Also clean memory caches
+    for (const [key, cached] of memoryCache.entries()) {
+      if (cached.data && cached.data.final_verdict === 'Scan Failed') {
+        memoryCache.delete(key);
+      }
+    }
+    for (const [key, cached] of urlCache.entries()) {
+      if (cached.data && cached.data.final_verdict === 'Scan Failed') {
+        urlCache.delete(key);
+      }
+    }
+    
+  } catch (error) {
+    console.error('[CacheService] Error cleaning up failed scans:', error);
+  }
 };
 
 

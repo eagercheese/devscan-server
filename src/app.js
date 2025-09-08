@@ -48,12 +48,37 @@ app.get('/health/ml', async (req, res) => {
     });
   } catch (error) {
     res.status(503).json({
-      ml_service: { status: 'error', error: error.message },
-      server_status: 'ok',
+      error: 'ML service health check failed',
+      details: error.message,
       timestamp: new Date().toISOString()
     });
   }
 });
+
+// Cache cleanup endpoint for maintenance
+app.post('/admin/cleanup-cache', async (req, res) => {
+  try {
+    const cacheService = require('./services/cacheService');
+    await cacheService.cleanupFailedScans();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Failed scan cache entries cleaned up successfully',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Cache cleanup failed',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ==============================
+// DATABASE DEBUG ENDPOINTS (DEBUG ONLY)
+// ==============================
 
 // Debug endpoint to inspect database content (development use)
 app.get('/debug/database', async (req, res) => {

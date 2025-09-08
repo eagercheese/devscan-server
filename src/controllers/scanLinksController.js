@@ -186,9 +186,24 @@ async function processSingleLink(url, sessionId = null, shouldCache = true) {
     }
 
     // ==============================
-    // STEP 4: CACHE ML RESULTS (NOT WHITELIST RESULTS)
+    // STEP 4: CACHE ML RESULTS (ONLY IF SUCCESSFUL)
     // ==============================
-    console.log(`[Link Processor] 💾 Caching ML result for: ${url}`);
+    // Don't cache failed scans - only cache successful ML analysis results
+    if (verdict.final_verdict === 'Scan Failed') {
+      console.log(`[Link Processor] ⚠️ Not caching scan failure for: ${url}`);
+      const result = await ScanResults.create({
+        final_verdict: verdict.final_verdict,
+        confidence_score: verdict.confidence_score,
+        anomaly_risk_level: verdict.anomaly_risk_level,
+        explanation: verdict.explanation,
+        tip: verdict.tip,
+        link_ID: link.link_ID,
+        session_ID: sessionId
+      });
+      return { result, fromCache: false, whitelisted: false };
+    }
+    
+    console.log(`[Link Processor] 💾 Caching successful ML result for: ${url}`);
     const result = shouldCache 
       ? await scanResultsController.createResultWithCache(verdict, link.link_ID, sessionId)
       : await ScanResults.create({

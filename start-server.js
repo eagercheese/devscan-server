@@ -32,6 +32,13 @@ sequelize.authenticate()
   .then(() => {
     console.log('Database tables synced successfully.');
     
+    // Clean up any failed scan cache entries that shouldn't be there
+    const cacheService = require('./src/services/cacheService');
+    return cacheService.cleanupFailedScans();
+  })
+  .then(() => {
+    console.log('Cache cleanup completed.');
+    
     // Start the HTTP server
     app.listen(PORT, () => {
       console.log(`Server is running on http://localhost:${PORT}`);
