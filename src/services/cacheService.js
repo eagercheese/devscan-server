@@ -76,6 +76,80 @@ exports.cleanExpiredCache = async () => {
 };
 
 // Check cache for a link by URL (primary method)
+// URL normalization helper function
+function normalizeUrlForCache(url) {
+  if (!url || typeof url !== 'string') return '';
+  
+  try {
+    // Parse URL to get components
+    const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+    
+    // Normalize: https protocol, remove www prefix, lowercase, remove trailing slash
+    let normalized = `https://${urlObj.hostname.replace(/^www\./, '').toLowerCase()}${urlObj.pathname}`;
+    
+    // Remove trailing slash unless it's just the domain
+    if (urlObj.pathname !== '/' && normalized.endsWith('/')) {
+      normalized = normalized.slice(0, -1);
+    }
+    
+    // Add query parameters back if they exist
+    if (urlObj.search) {
+      normalized += urlObj.search;
+    }
+    
+    return normalized;
+  } catch (e) {
+    // Fallback: basic normalization
+    return url.trim().toLowerCase().replace(/\/+$/, '');
+  }
+}
+
+// Generate multiple URL variants for cache lookup
+function generateUrlVariants(url) {
+  const variants = new Set();
+  
+  try {
+    const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+    const domain = urlObj.hostname.toLowerCase();
+    const path = urlObj.pathname;
+    const search = urlObj.search || '';
+    
+    // Add original URL
+    variants.add(url);
+    
+    // Add normalized version
+    variants.add(normalizeUrlForCache(url));
+    
+    // Add with/without www variants
+    const domainWithoutWww = domain.replace(/^www\./, '');
+    const domainWithWww = domainWithoutWww.startsWith('www.') ? domainWithoutWww : `www.${domainWithoutWww}`;
+    
+    // HTTP and HTTPS variants
+    for (const protocol of ['http', 'https']) {
+      for (const domainVariant of [domainWithoutWww, domainWithWww]) {
+        const baseUrl = `${protocol}://${domainVariant}${path}${search}`;
+        variants.add(baseUrl);
+        
+        // Also add without trailing slash
+        if (path !== '/' && baseUrl.endsWith('/')) {
+          variants.add(baseUrl.slice(0, -1));
+        }
+        // And with trailing slash
+        if (path === '' || (!baseUrl.endsWith('/') && !search)) {
+          variants.add(baseUrl + '/');
+        }
+      }
+    }
+    
+    console.log(`[CacheService] Generated ${variants.size} URL variants for lookup: ${url}`);
+    return Array.from(variants);
+    
+  } catch (e) {
+    console.warn(`[CacheService] Failed to generate URL variants for ${url}:`, e.message);
+    return [url]; // Return original URL as fallback
+  }
+}
+
 exports.getCachedResultByUrl = async (url) => {
   // First check the fast in-memory URL cache
   const fastCached = urlCache.get(url);
@@ -84,15 +158,21 @@ exports.getCachedResultByUrl = async (url) => {
     return fastCached.data;
   }
 
-  // Then check database cache by URL (direct lookup - much faster!)
+  // Then check database cache by URL with enhanced URL matching
   const dbAvailable = await testDatabaseConnection();
   
   if (dbAvailable) {
     try {
-      // Try direct URL lookup first (new format)
+      // Generate multiple URL variants to check (www/non-www, http/https, trailing slashes)
+      const urlVariants = generateUrlVariants(url);
+      console.log(`[CacheService] Checking cache for ${urlVariants.length} URL variants of: ${url}`);
+      
+      // Try direct URL lookup for all variants (new format)
       let result = await CachedResults.findOne({
         where: { 
-          url: url,
+          url: {
+            [Sequelize.Op.in]: urlVariants
+          },
           expiresAt: {
             [Sequelize.Op.gt]: new Date() // Only get non-expired results
           }
@@ -101,12 +181,17 @@ exports.getCachedResultByUrl = async (url) => {
         limit: 1
       });
       
-      // Fallback to join-based lookup (old format) if no direct URL result
+      // Fallback to join-based lookup for all variants (old format) if no direct URL result
       if (!result) {
+        console.log(`[CacheService] No direct URL match, trying join-based lookup for variants`);
         result = await CachedResults.findOne({
           include: [{
             model: ScannedLink,
-            where: { url: url },
+            where: { 
+              url: {
+                [Sequelize.Op.in]: urlVariants
+              }
+            },
             required: true
           }],
           order: [['lastScanned', 'DESC']],
@@ -116,6 +201,9 @@ exports.getCachedResultByUrl = async (url) => {
       
       if (result) {
         // Database cache hit - result found
+        const matchedUrl = result.url || (result.ScannedLink ? result.ScannedLink.url : 'unknown');
+        console.log(`[CacheService] ✅ Cache HIT for ${url} (matched: ${matchedUrl})`);
+        
         // Store in fast cache for next time
         const resultData = {
           final_verdict: result.final_verdict,
@@ -133,6 +221,8 @@ exports.getCachedResultByUrl = async (url) => {
           timestamp: Date.now()
         });
         return resultData;
+      } else {
+        console.log(`[CacheService] ❌ Cache MISS for ${url} (checked ${urlVariants.length} variants)`);
       }
     } catch (error) {
       console.warn('[CacheService] Database cache failed, using memory fallback:', error.message);

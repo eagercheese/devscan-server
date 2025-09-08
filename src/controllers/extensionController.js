@@ -9,25 +9,88 @@ const scannedLinkController = require('./scannedLinkController');
 const scanLinksController = require('./scanLinksController');
 const whitelistService = require('../services/whitelistService');
 
+// Custom error class for API errors
+class APIError extends Error {
+  constructor(message, code, details = null, statusCode = 500) {
+    super(message);
+    this.name = 'APIError';
+    this.code = code;
+    this.details = details;
+    this.statusCode = statusCode;
+  }
+}
+
 // ==============================
 // MAIN LINK ANALYSIS ENDPOINT
 // ==============================
 // POST /api/extension/analyze - Simplified endpoint for extension
 // Processes multiple URLs through the complete security analysis pipeline
-exports.analyzeLinks = async (req, res) => {
+exports.analyzeLinks = async (req, res, next) => {
   try {
     const { links, domain, browserInfo, sessionId, pageUrl, pageRefreshed } = req.body;
     
-    // Input validation
+    // Input validation with detailed error messages
     if (!Array.isArray(links) || links.length === 0) {
-      return res.status(400).json({ error: 'links array is required' });
+      throw new APIError(
+        'Invalid request: links array is required and must not be empty',
+        'INVALID_REQUEST',
+        {
+          received: typeof links,
+          expected: 'array with at least one URL',
+          example: { links: ['https://example.com'], domain: 'example.com' }
+        },
+        400
+      );
+    }
+
+    // Validate URLs
+    const validLinks = [];
+    const invalidLinks = [];
+    
+    for (const link of links) {
+      if (typeof link !== 'string' || link.trim().length === 0) {
+        invalidLinks.push({ url: link, reason: 'Empty or non-string URL' });
+        continue;
+      }
+      
+      try {
+        new URL(link); // Validate URL format
+        validLinks.push(link);
+      } catch (e) {
+        invalidLinks.push({ url: link, reason: 'Invalid URL format' });
+      }
+    }
+
+    if (validLinks.length === 0) {
+      throw new APIError(
+        'No valid URLs provided',
+        'INVALID_REQUEST',
+        {
+          invalidLinks,
+          message: 'All provided URLs were invalid or malformed'
+        },
+        400
+      );
+    }
+
+    console.log(`[Extension API] 📥 Processing ${validLinks.length} valid links for domain: ${domain}`);
+    if (invalidLinks.length > 0) {
+      console.warn(`[Extension API] ⚠️ Skipped ${invalidLinks.length} invalid links:`, invalidLinks);
     }
 
     // ==============================
-    // SESSION MANAGEMENT (PAGE-AWARE)
+    // SESSION MANAGEMENT (ENHANCED)
     // ==============================
-    // Use existing session or create new one for tracking this batch
-    const currentSessionId = await scanSessionController.getOrCreateSession(sessionId, browserInfo, domain);
+    let currentSessionId;
+    
+    if (req.createNewSession) {
+      console.log(`[Extension API] Creating new session (reason: ${req.invalidSessionReason || 'no session provided'})`);
+      currentSessionId = await scanSessionController.getOrCreateSession(null, browserInfo, domain);
+      console.log(`[Extension API] ✅ Created new session: ${currentSessionId}`);
+    } else {
+      currentSessionId = sessionId || await scanSessionController.getOrCreateSession(sessionId, browserInfo, domain);
+      console.log(`[Extension API] ✅ Using existing session: ${currentSessionId}`);
+    }
 
     // ==============================
     // PAGE-BASED DUPLICATE DETECTION  
@@ -44,33 +107,61 @@ exports.analyzeLinks = async (req, res) => {
     // ==============================
     // Delegate the actual processing to scanLinksController with page context
     const processingResult = await scanLinksController.processBulkLinksForExtension(
-      links, 
+      validLinks, // Use validLinks instead of links
       currentSessionId, 
       alreadyProcessed,
-      pageUrl  // NEW: Pass page context for better caching
+      pageUrl  // Pass page context for better caching
     );
 
     // ==============================
-    // RESPONSE GENERATION
+    // RESPONSE GENERATION (ENHANCED)
     // ==============================
-    // Send response to extension with processing results
-    console.log(`[Extension API] 📤 Sending verdicts to extension:`, {
-      verdictCount: Object.keys(processingResult.verdicts).length,
-      verdicts: processingResult.verdicts,
-      session_ID: currentSessionId
-    });
-    
-    res.json({ 
+    const response = {
       success: true,
       verdicts: processingResult.verdicts,
       session_ID: currentSessionId,
       processed: Object.keys(processingResult.verdicts).length,
       newLinks: processingResult.newLinksProcessed,
-      cachedLinks: processingResult.cachedLinksReturned
+      cachedLinks: processingResult.cachedLinksReturned,
+      sessionStatus: req.createNewSession ? 'new_session_created' : 'existing_session_used'
+    };
+
+    // Add warning about invalid links if any
+    if (invalidLinks.length > 0) {
+      response.warnings = [{
+        type: 'invalid_links',
+        count: invalidLinks.length,
+        message: `${invalidLinks.length} invalid URLs were skipped`,
+        details: invalidLinks.slice(0, 5) // Only show first 5 invalid links
+      }];
+    }
+
+    console.log(`[Extension API] 📤 Sending verdicts to extension:`, {
+      verdictCount: Object.keys(processingResult.verdicts).length,
+      sessionId: currentSessionId,
+      sessionStatus: response.sessionStatus,
+      warnings: response.warnings ? response.warnings.length : 0
     });
+    
+    res.json(response);
     
   } catch (error) {
     console.error('[Extension API] Error analyzing links:', error);
-    res.status(500).json({ error: 'Failed to analyze links', details: error.message });
+    
+    // Use next() to pass error to global error handler
+    if (error instanceof APIError) {
+      return next(error);
+    }
+    
+    // Convert unknown errors to APIError
+    next(new APIError(
+      'Failed to analyze links',
+      'ANALYSIS_ERROR',
+      {
+        originalError: error.message,
+        stack: error.stack
+      },
+      500
+    ));
   }
 };

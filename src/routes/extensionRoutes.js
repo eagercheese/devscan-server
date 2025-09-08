@@ -4,9 +4,12 @@ const extensionController = require('../controllers/extensionController');
 const whitelistService = require('../services/whitelistService');
 const { validateSession, rateLimitBySession } = require('../middleware/sessionValidation');
 
-// Apply session validation and rate limiting to all extension routes
+// Apply session validation and enhanced rate limiting to all extension routes
 router.use(validateSession);
-router.use(rateLimitBySession(500, 60 * 60 * 1000)); // 500 requests per hour per session
+router.use(rateLimitBySession(1000, 60 * 60 * 1000, { 
+  burst: 100, // Allow 100 requests per minute for normal browsing
+  burstWindow: 60 * 1000 // 1 minute burst window
+})); // 1000 requests per hour with burst support
 
 // POST /api/extension/analyze - Main endpoint for extension link analysis
 router.post('/analyze', extensionController.analyzeLinks);
